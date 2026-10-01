@@ -450,7 +450,18 @@ fn setup_environment(app: tauri::AppHandle) {
                     std::time::Duration::from_secs(60),
                     engine_state.as_ref().map(|s| &s.0),
                 );
-                let status = if matches!(outcome, sidecar::EngineWait::Ready) { "done" } else { "error" };
+                let status = if matches!(outcome, sidecar::EngineWait::Ready) {
+                    if let Ok(tok) = sidecar::ensure_engine_token() {
+                        set_cached_engine_token(tok.clone());
+                        if let Some(win) = app.get_webview_window("main") {
+                            let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", tok);
+                            let _ = win.eval(&js);
+                        }
+                    }
+                    "done"
+                } else {
+                    "error"
+                };
                 emit("engine", status, &outcome.describe());
             }
             Err(e) => {
@@ -472,6 +483,23 @@ use tauri::{
 };
 
 struct EngineProcess(Mutex<Option<std::process::Child>>);
+
+static ENGINE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+fn set_cached_engine_token(tok: String) {
+    if let Ok(mut g) = ENGINE_TOKEN.lock() {
+        *g = Some(tok);
+    }
+}
+
+fn get_cached_engine_token() -> Option<String> {
+    ENGINE_TOKEN.lock().ok().and_then(|g| g.clone())
+}
+
+#[tauri::command]
+fn get_engine_token() -> Option<String> {
+    get_cached_engine_token()
+}
 
 /// Set to `true` when the app is shutting down.  Background threads
 /// (e.g. `setup_environment`) check this before spawning new processes
@@ -936,7 +964,15 @@ pub fn run() {
                                 Duration::from_secs(30),
                                 engine_state.as_ref().map(|s| &s.0),
                             );
-                            if !matches!(outcome, sidecar::EngineWait::Ready) {
+                            if matches!(outcome, sidecar::EngineWait::Ready) {
+                                if let Ok(tok) = sidecar::ensure_engine_token() {
+                                    set_cached_engine_token(tok.clone());
+                                    if let Some(win) = handle.get_webview_window("main") {
+                                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", tok);
+                                        let _ = win.eval(&js);
+                                    }
+                                }
+                            } else {
                                 log::error!("Engine startup failed: {}", outcome.describe());
                             }
                         });
@@ -950,6 +986,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_engine_token,
             n8n::check_node,
             n8n::check_n8n_installed,
             n8n::n8n_status,
@@ -977,7 +1014,12 @@ pub fn run() {
                     || url.starts_with("https://tauri.localhost/")
                     || url.starts_with("about:");
 
-                if !is_internal {
+                if is_internal {
+                    if let Some(token) = get_cached_engine_token() {
+                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", token);
+                        let _ = webview.eval(&js);
+                    }
+                } else {
                     let back_url = if cfg!(debug_assertions) {
                         "http://localhost:5173/feed"
                     } else if cfg!(windows) {

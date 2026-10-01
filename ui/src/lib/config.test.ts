@@ -5,6 +5,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	getEngineUrl,
 	getEngineWsUrl,
+	getEngineToken,
+	setEngineToken,
 	CODING_AGENTS,
 	DEFAULT_AGENT_PATHS,
 	AGENT_BINARY_NAMES,
@@ -25,6 +27,32 @@ describe('engine URL helpers', () => {
 		// The regex is anchored (^http) so a host containing "http" would be safe.
 		expect(getEngineWsUrl().startsWith('ws://')).toBe(true);
 		expect(getEngineWsUrl().includes('http')).toBe(false);
+	});
+});
+
+describe('engine auth token helpers', () => {
+	it('sets and retrieves engine token', () => {
+		setEngineToken('test_token_xyz');
+		expect(getEngineToken()).toBe('test_token_xyz');
+		setEngineToken(null);
+	});
+
+	it('reads from window.__LAYA_CONFIG__ if not cached', () => {
+		setEngineToken(null);
+		const win = ((globalThis as any).window ??= {});
+		win.__LAYA_CONFIG__ = { token: 'injected_from_config' };
+		expect(getEngineToken()).toBe('injected_from_config');
+		delete win.__LAYA_CONFIG__;
+		setEngineToken(null);
+	});
+
+	it('reads from window.__LAYA_ENGINE_TOKEN__ if not cached', () => {
+		setEngineToken(null);
+		const win = ((globalThis as any).window ??= {});
+		win.__LAYA_ENGINE_TOKEN__ = 'injected_from_window';
+		expect(getEngineToken()).toBe('injected_from_window');
+		delete win.__LAYA_ENGINE_TOKEN__;
+		setEngineToken(null);
 	});
 });
 

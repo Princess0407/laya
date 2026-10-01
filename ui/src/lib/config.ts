@@ -23,6 +23,31 @@ export function getEngineWsUrl(): string {
 	return getEngineUrl().replace(/^http/, 'ws') + '/ws';
 }
 
+let _engineToken: string | null = null;
+
+export function getEngineToken(): string | null {
+	if (_engineToken) return _engineToken;
+	if (typeof window !== 'undefined') {
+		const win = window as unknown as {
+			__LAYA_CONFIG__?: { token?: string };
+			__LAYA_ENGINE_TOKEN__?: string;
+		};
+		const injected = win.__LAYA_CONFIG__?.token ?? win.__LAYA_ENGINE_TOKEN__;
+		if (injected) {
+			_engineToken = injected;
+			return _engineToken;
+		}
+	}
+	return null;
+}
+
+export function setEngineToken(token: string | null): void {
+	_engineToken = token;
+	if (typeof window !== 'undefined') {
+		(window as unknown as { __LAYA_ENGINE_TOKEN__?: string | null }).__LAYA_ENGINE_TOKEN__ = token;
+	}
+}
+
 export interface AgentOption {
 	value: string;
 	label: string;
