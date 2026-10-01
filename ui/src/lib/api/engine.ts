@@ -80,7 +80,7 @@ import type {
 	ThroughputResponse
 } from './types';
 
-import { getEngineUrl } from '$lib/config';
+import { getEngineToken, getEngineUrl } from '$lib/config';
 
 const ENGINE_URL = getEngineUrl();
 
@@ -93,9 +93,17 @@ const TRACE_TIMEOUT_MS = 600_000;
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
 	const signal = options?.signal ?? AbortSignal.timeout(30_000);
+	const headers = new Headers(options?.headers);
+	if (!headers.has('Content-Type')) {
+		headers.set('Content-Type', 'application/json');
+	}
+	const token = getEngineToken();
+	if (token && !headers.has('Authorization')) {
+		headers.set('Authorization', `Bearer ${token}`);
+	}
 	const resp = await fetch(`${ENGINE_URL}${path}`, {
-		headers: { 'Content-Type': 'application/json' },
 		...options,
+		headers,
 		signal,
 	});
 	if (!resp.ok) {
@@ -224,6 +232,12 @@ export const engineApi = {
 	deleteApiKey: (provider: string) =>
 		request<{ status: string; provider: string }>(`/settings/api-key/${provider}`, {
 			method: 'DELETE'
+		}),
+
+	// Engine auth token rotation
+	rotateEngineToken: () =>
+		request<{ token: string }>('/auth/rotate', {
+			method: 'POST'
 		}),
 
 	// Available models (dynamic, grouped by provider)
