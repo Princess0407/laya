@@ -108,11 +108,88 @@ async def test_events_interim_exemption(db):
 
 @pytest.mark.asyncio
 async def test_other_events_routes_require_auth():
-    """GET /events/dead requires engine auth even though POST /events is exempt."""
+    """GET /events/dead, GET /events/counts require engine auth even though POST /events is exempt."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/events/dead")
-    assert resp.status_code == 401
+        assert resp.status_code == 401
+        resp2 = await client.get("/events/counts")
+        assert resp2.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_repos_get_exempt_and_put_requires_auth():
+    """GET /repos is exempt (used by n8n workflows); PUT /repos requires auth."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # GET /repos without token succeeds
+        resp = await client.get("/repos?platform=github")
+        assert resp.status_code == 200
+
+        # PUT /repos without token is rejected
+        put_resp = await client.put("/repos", json={"repos": []})
+        assert put_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_metadata_exemptions_and_restrictions(db):
+    """GET /metadata, GET/PUT /metadata/{key} are exempt for n8n; DELETE requires auth."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # GET /metadata list without token
+        resp = await client.get("/metadata")
+        assert resp.status_code == 200
+
+        # PUT /metadata/{key} without token (n8n state storage)
+        put_resp = await client.put(
+            "/metadata/slack-channels:wf_123",
+            json={"value": {"channels": ["general"]}},
+        )
+        assert put_resp.status_code == 200
+
+        # GET /metadata/{key} without token (n8n config fetch)
+        get_resp = await client.get("/metadata/slack-channels:wf_123")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["value"] == {"channels": ["general"]}
+
+        # DELETE /metadata/{key} requires auth
+        del_resp = await client.delete("/metadata/slack-channels:wf_123")
+        assert del_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_ingestion_errors_exemptions_and_restrictions(db):
+    """POST /ingestion-errors is exempt (n8n error handler); GET and clear routes require auth."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # POST /ingestion-errors without token -> 202
+        post_resp = await client.post(
+            "/ingestion-errors",
+            json={
+                "workflow_id": "wf_test_123",
+                "error_message": "Network timeout to source",
+                "occurred_at": "2026-02-22T14:30:00Z",
+            },
+        )
+        assert post_resp.status_code == 202
+
+        # GET /ingestion-errors (UI audit/surfacing) -> 401
+        get_resp = await client.get("/ingestion-errors")
+        assert get_resp.status_code == 401
+
+        # Clear routes -> 401
+        clear_resp = await client.post("/ingestion-errors/clear-all")
+        assert clear_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_vendor_oauth_callback_exempt():
+    """GET /egress/connections/oauth/callback is exempt from engine bearer auth."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Calling without code/state returns 422 validation error, not 401 Unauthorized
+        resp = await client.get("/egress/connections/oauth/callback")
+        assert resp.status_code != 401
 
 
 @pytest.mark.asyncio
