@@ -80,7 +80,10 @@ import type {
 	ThroughputResponse
 } from './types';
 
-import { getEngineToken, getEngineUrl } from '$lib/config';
+import { getEngineToken, setEngineToken, getEngineUrl } from '$lib/config';
+import { ensureEngineReady } from '$lib/stores/health';
+
+export { ensureEngineReady };
 
 const ENGINE_URL = getEngineUrl();
 
@@ -91,21 +94,25 @@ const ENGINE_URL = getEngineUrl();
 // drift is exactly what made every rerun abort client-side at 30s.
 const TRACE_TIMEOUT_MS = 600_000;
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function engineFetch(path: string, options?: RequestInit): Promise<Response> {
 	const signal = options?.signal ?? AbortSignal.timeout(30_000);
 	const headers = new Headers(options?.headers);
-	if (!headers.has('Content-Type')) {
+	if (!headers.has('Content-Type') && !(options?.body instanceof FormData)) {
 		headers.set('Content-Type', 'application/json');
 	}
 	const token = getEngineToken();
 	if (token && !headers.has('Authorization')) {
 		headers.set('Authorization', `Bearer ${token}`);
 	}
-	const resp = await fetch(`${ENGINE_URL}${path}`, {
+	return fetch(`${ENGINE_URL}${path}`, {
 		...options,
 		headers,
 		signal,
 	});
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+	const resp = await engineFetch(path, options);
 	if (!resp.ok) {
 		let detail: string | undefined;
 		try {
@@ -215,6 +222,12 @@ export const engineApi = {
 			method: 'PUT',
 			body: JSON.stringify(settings)
 		}),
+	getSetupStatus: () => request<{ setup_complete: boolean }>('/settings/setup-status'),
+	exportDiagnostics: async (): Promise<Blob> => {
+		const resp = await engineFetch('/diagnostics/export');
+		if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
+		return resp.blob();
+	},
 
 	detectAgentPaths: () =>
 		request<{ agent_paths: Record<string, string> }>('/settings/detect-agents'),
@@ -235,10 +248,13 @@ export const engineApi = {
 		}),
 
 	// Engine auth token rotation
-	rotateEngineToken: () =>
-		request<{ token: string }>('/auth/rotate', {
+	rotateEngineToken: async () => {
+		const res = await request<{ token: string }>('/auth/rotate', {
 			method: 'POST'
-		}),
+		});
+		setEngineToken(res.token);
+		return res;
+	},
 
 	// Available models (dynamic, grouped by provider)
 	getAvailableModels: (refresh?: boolean) =>
@@ -311,6 +327,24 @@ export const engineApi = {
 	markCardDone: (cardId: string) =>
 		request<{ status: string; card_id: string }>(`/cards/${cardId}/done`, {
 			method: 'POST'
+		}),
+	uploadAgentFile: (file: File) => {
+		const formData = new FormData();
+		formData.append('file', file);
+		return request<{ path: string; filename: string; content_type?: string }>('/upload-agent-file', {
+			method: 'POST',
+			body: formData
+		});
+	},
+	uploadAgentFilePath: (path: string) =>
+		request<{ path: string; filename: string; content_type?: string }>('/upload-agent-file-path', {
+			method: 'POST',
+			body: JSON.stringify({ path })
+		}),
+	deleteAgentStagingFile: (path: string) =>
+		request<{ status: string }>('/delete-agent-staging-file', {
+			method: 'POST',
+			body: JSON.stringify({ path })
 		}),
 	runAgent: (data: {
 		prompt: string;
@@ -863,7 +897,7 @@ export const engineApi = {
 		}),
 
 	exportTrace: async (traceId: string): Promise<Blob> => {
-		const resp = await fetch(`${ENGINE_URL}/traces/${traceId}/export`);
+		const resp = await engineFetch(`/traces/${traceId}/export`);
 		if (!resp.ok) throw new Error(`Export failed: ${resp.status}`);
 		return resp.blob();
 	},

@@ -454,7 +454,8 @@ fn setup_environment(app: tauri::AppHandle) {
                     if let Ok(tok) = sidecar::ensure_engine_token() {
                         set_cached_engine_token(tok.clone());
                         if let Some(win) = app.get_webview_window("main") {
-                            let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", tok);
+                            let token_json = serde_json::to_string(&tok).unwrap_or_else(|_| format!("{:?}", tok));
+                            let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
                             let _ = win.eval(&js);
                         }
                     }
@@ -498,7 +499,14 @@ fn get_cached_engine_token() -> Option<String> {
 
 #[tauri::command]
 fn get_engine_token() -> Option<String> {
-    get_cached_engine_token()
+    if let Some(tok) = get_cached_engine_token() {
+        return Some(tok);
+    }
+    if let Ok(tok) = sidecar::ensure_engine_token() {
+        set_cached_engine_token(tok.clone());
+        return Some(tok);
+    }
+    None
 }
 
 /// Set to `true` when the app is shutting down.  Background threads
@@ -650,7 +658,23 @@ pub(crate) fn kill_process_on_port(port: u16, identity: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let token = sidecar::ensure_engine_token().ok();
+    if let Some(ref tok) = token {
+        set_cached_engine_token(tok.clone());
+    }
+
+    let mut builder = tauri::Builder::default();
+    if let Some(ref tok) = token {
+        let token_json = serde_json::to_string(tok).unwrap_or_else(|_| format!("{:?}", tok));
+        let script = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
+        builder = builder.plugin(
+            tauri::plugin::Builder::new("engine-token")
+                .js_init_script(script)
+                .build(),
+        );
+    }
+
+    builder
         .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
@@ -968,7 +992,8 @@ pub fn run() {
                                 if let Ok(tok) = sidecar::ensure_engine_token() {
                                     set_cached_engine_token(tok.clone());
                                     if let Some(win) = handle.get_webview_window("main") {
-                                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", tok);
+                                        let token_json = serde_json::to_string(&tok).unwrap_or_else(|_| format!("{:?}", tok));
+                                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
                                         let _ = win.eval(&js);
                                     }
                                 }
@@ -1016,7 +1041,8 @@ pub fn run() {
 
                 if is_internal {
                     if let Some(token) = get_cached_engine_token() {
-                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {:?};", token);
+                        let token_json = serde_json::to_string(&token).unwrap_or_else(|_| format!("{:?}", token));
+                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
                         let _ = webview.eval(&js);
                     }
                 } else {
