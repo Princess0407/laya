@@ -20,6 +20,7 @@
 	function statusIcon(status: string | undefined): string {
 		if (status === 'healthy' || status === 'connected' || status === 'available') return 'text-green-400';
 		if (status === 'unreachable' || status === 'not_configured') return 'text-surface-500';
+		if (status === 'starting') return 'text-yellow-400';
 		return 'text-red-400';
 	}
 
@@ -184,7 +185,7 @@
 	<!-- System Status section -->
 	<section>
 		<h2 class="mb-4 text-lg font-semibold">System Status</h2>
-		<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+		<div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
 			<!-- Engine -->
 			<div class={cardClass}>
 				<div class="mb-1.5 text-[10px] uppercase tracking-wider text-surface-400">Engine</div>
@@ -203,6 +204,19 @@
 					<span class="text-sm text-red-400">Offline</span>
 				{:else}
 					<span class="text-sm {statusIcon($health.sqlite)}">{statusLabel($health.sqlite)}</span>
+				{/if}
+			</div>
+
+			<!-- ChromaDB -->
+			<div class={cardClass}>
+				<div class="mb-1.5 text-[10px] uppercase tracking-wider text-surface-400">ChromaDB</div>
+				{#if $healthError || !$health}
+					<span class="text-sm text-red-400">Offline</span>
+				{:else}
+					<span class="text-sm {statusIcon($health.chromadb)}">{statusLabel($health.chromadb)}</span>
+					{#if $health.chromadb === 'starting'}
+						<div class="mt-1 text-[10px] text-surface-500">Setting up semantic search</div>
+					{/if}
 				{/if}
 			</div>
 
@@ -233,13 +247,19 @@
 					<div>
 						<div class="text-[10px] uppercase tracking-wider text-surface-400">Embeddings</div>
 						<div class="mt-1 flex items-center gap-2">
-							<span class="text-sm text-surface-200">{emb.model}</span>
-							<span class="text-[10px] text-surface-500">{emb.dimensions}d</span>
+							{#if emb.status === 'not_initialized'}
+								<span class="text-sm text-surface-400">
+									{$health.chromadb === 'starting' ? 'Loading…' : 'Not loaded'}
+								</span>
+							{:else}
+								<span class="text-sm text-surface-200">{emb.model}</span>
+								<span class="text-[10px] text-surface-500">{emb.dimensions}d</span>
+							{/if}
 							{#if emb.status === 'fallback'}
 								<span class="rounded-full bg-laya-gold/20 px-2 py-0.5 text-[10px] font-medium text-laya-amber">Fallback</span>
 							{:else if emb.status === 'active'}
 								<span class="rounded-full bg-green-500/20 px-2 py-0.5 text-[10px] font-medium text-green-400">Active</span>
-							{:else}
+							{:else if emb.status !== 'not_initialized'}
 								<span class="rounded-full bg-surface-600/50 px-2 py-0.5 text-[10px] font-medium text-surface-400">{emb.status}</span>
 							{/if}
 						</div>
@@ -251,6 +271,8 @@
 								sentence-transformers
 							{:else if emb.backend === 'chromadb_default'}
 								ChromaDB built-in (onnxruntime)
+							{:else if emb.status === 'not_initialized'}
+								—
 							{:else}
 								{emb.backend}
 							{/if}

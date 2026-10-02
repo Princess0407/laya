@@ -1,11 +1,15 @@
 // Copyright 2026 Aayush Chawla
 // SPDX-License-Identifier: Apache-2.0
 
-import { writable, derived } from 'svelte/store';
+import { writable } from 'svelte/store';
 import type { HealthResponse } from '$lib/api/types';
 import { getEngineUrl } from '$lib/config';
+import { vectorStoreState } from '$lib/utils/vectorStore';
 
 const ENGINE_URL = getEngineUrl();
+
+const FAST_POLL_MS = 1500;
+const SLOW_POLL_MS = 30000;
 
 export const health = writable<HealthResponse | null>(null);
 export const healthError = writable<boolean>(false);
@@ -14,7 +18,15 @@ export const healthError = writable<boolean>(false);
 export const startupReady = writable<boolean>(false);
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+let pollMs = FAST_POLL_MS;
 let startupMode = true;
+
+function setPollRate(ms: number) {
+	if (!pollInterval || ms === pollMs) return;
+	clearInterval(pollInterval);
+	pollMs = ms;
+	pollInterval = setInterval(fetchHealth, ms);
+}
 
 async function fetchHealth() {
 	try {
@@ -25,16 +37,16 @@ async function fetchHealth() {
 			healthError.set(false);
 
 			// Once engine + sqlite are healthy, mark startup as complete
-			// and switch to slow polling
 			if (startupMode && data.engine === 'healthy' && data.sqlite === 'healthy') {
 				startupReady.set(true);
 				startupMode = false;
-				// Switch to normal 30s polling
-				if (pollInterval) {
-					clearInterval(pollInterval);
-					pollInterval = setInterval(fetchHealth, 30000);
-				}
 			}
+
+			// Poll fast during startup and while the vector store is still
+			// connecting, so the UI reflects its completion promptly; otherwise
+			// poll slowly.
+			const settling = startupMode || vectorStoreState(data) === 'starting';
+			setPollRate(settling ? FAST_POLL_MS : SLOW_POLL_MS);
 		} else {
 			healthError.set(true);
 		}
@@ -48,8 +60,8 @@ export function startHealthPolling() {
 	stopHealthPolling();
 	startupMode = true;
 	fetchHealth(); // immediate first check
-	// Poll every 1.5s during startup, switches to 30s once ready
-	pollInterval = setInterval(fetchHealth, 1500);
+	pollMs = FAST_POLL_MS;
+	pollInterval = setInterval(fetchHealth, pollMs);
 }
 
 export function stopHealthPolling() {

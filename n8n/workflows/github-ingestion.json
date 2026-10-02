@@ -81,7 +81,8 @@
       "position": [
         900,
         200
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -110,7 +111,8 @@
       "position": [
         900,
         420
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -199,7 +201,8 @@
       "position": [
         900,
         600
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -212,6 +215,51 @@
       "position": [
         1200,
         400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Runs on the error output of the three GitHub request nodes (onError:\n// continueErrorOutput). Each failed item keeps its input fields (owner, repo)\n// plus n8n's `error`. Before this, one 404/401/403 on any repo aborted the whole\n// poll and no repo got ingested; now the good repos still flow through the\n// success output, and each failure is reported to the engine's\n// /ingestion-errors endpoint (same schema as the Laya error handler workflow) so\n// it shows up in Audit with a per-repo message instead of being dropped.\n// The engine coalesces repeats by (workflow, node, message) so a broken token\n// polling every 2 minutes stays one row with a climbing occurrence count.\n\n// With a credential attached, n8n hands the Code node a NodeApiError whose\n// numeric code is not serialized: only its canned `message` (keyed by status\n// in n8n's STATUS_CODE_MESSAGES) and `description` (GitHub's own message,\n// e.g. \"Bad credentials\") survive. Try the numeric fields first, then map the\n// canned message back to a status.\nconst MESSAGE_TO_STATUS = [\n  ['Authorization failed', 401],\n  ['Forbidden', 403],\n  ['could not be found', 404],\n  ['too many requests', 429],\n  ['spacing your requests', 429],\n];\nfunction statusOf(err) {\n  const direct = Number(err.httpCode ?? err.status ?? err.statusCode);\n  if (Number.isFinite(direct) && direct > 0) return direct;\n  const msg = String(err.message || '');\n  for (const [needle, status] of MESSAGE_TO_STATUS) {\n    if (msg.includes(needle)) return status;\n  }\n  return null;\n}\n\nconst node = $prevNode.name;\nreturn $input.all().map(item => {\n  const d = item.json || {};\n  const err = d.error || {};\n  const repo = (d.owner && d.repo) ? d.owner + '/' + d.repo : 'unknown repo';\n  const status = statusOf(err);\n  const hint = status === 401 ? 'token invalid or revoked'\n    : status === 403 ? 'token lacks access to this repo, or rate limited'\n    : status === 404 ? 'repo not found, or not accessible with this token'\n    : status === 429 ? 'rate limited'\n    : 'request failed';\n  const detail = err.description || err.message || '';\n  return { json: {\n    workflow_id: $workflow.id,\n    workflow_name: $workflow.name,\n    platform: 'github',\n    node_name: node,\n    node_type: 'n8n-nodes-base.httpRequest',\n    error_name: err.name || 'GitHubRequestError',\n    error_message: 'GitHub ' + (status || 'error') + ' for ' + repo + ': ' + hint\n      + (detail ? ' (' + detail + ')' : ''),\n    error_http_code: status,\n    error_details: { repo, status, message: err.message, description: err.description },\n    execution_id: String($execution.id || ''),\n    execution_mode: $execution.mode || '',\n    occurred_at: new Date().toISOString()\n  } };\n});"
+      },
+      "name": "Report Repo Errors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        800
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.LAYA_ENGINE_URL }}/ingestion-errors",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "name": "POST Repo Errors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1340,
+        800
       ]
     }
   ],
@@ -267,6 +315,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Report Repo Errors",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -277,6 +332,13 @@
             "node": "Merge",
             "type": "main",
             "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Report Repo Errors",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -311,6 +373,13 @@
             "type": "main",
             "index": 1
           }
+        ],
+        [
+          {
+            "node": "Report Repo Errors",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -324,6 +393,17 @@
           }
         ]
       ]
+    },
+    "Report Repo Errors": {
+      "main": [
+        [
+          {
+            "node": "POST Repo Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -331,6 +411,6 @@
   },
   "active": false,
   "meta": {
-    "laya_version": "2026.05.2"
+    "laya_version": "2026.09.29"
   }
 }

@@ -9,7 +9,7 @@ import structlog
 from fastapi import APIRouter
 
 from laya.config import get_n8n_config
-from laya.db.chromadb_store import is_chromadb_healthy, get_embedding_info
+from laya.db.chromadb_store import get_chromadb_status, get_embedding_info
 from laya.db.sqlite import is_healthy as sqlite_healthy
 from laya.http_client import get_client
 
@@ -35,8 +35,8 @@ async def health_check() -> dict:
     except Exception:
         n8n_status = "unreachable"
 
-    # ChromaDB
-    chromadb_status = "healthy" if is_chromadb_healthy() else "unhealthy"
+    # ChromaDB ("starting" while the background connect is still running)
+    chromadb_status = get_chromadb_status()
 
     uptime = int(time.time() - _start_time)
 

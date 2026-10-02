@@ -37,7 +37,6 @@ vite.config.ts.timestamp-*
 # Rust / Tauri (ui/src-tauri/)
 # =========================
 target/
-Cargo.lock
 ui/src-tauri/resources/engine/
 ui/src-tauri/resources/runtime/
 

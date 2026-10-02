@@ -6,30 +6,31 @@ authors = ["Aayush"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 [lib]
 name = "laya_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.4", features = [] }
+tauri-build = { version = "=2.7.0", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-# Crates that have an npm counterpart in ui/package.json are tilde-pinned to the same
-# major.minor as that package. `tauri dev`/`tauri build` checks the two sides agree on
-# major.minor and reports "Found version mismatched Tauri packages" otherwise. Cargo.lock
-# is gitignored, so a caret range ("2") lets a fresh clone resolve a newer crate minor than
-# the npm lockfile has and trip that check. Bump both sides together.
-tauri = { version = "~2.11", features = ["tray-icon", "image-png"] }
-tauri-plugin-log = "2"
-tauri-plugin-shell = "~2.3"
-tauri-plugin-dialog = "2"
-tauri-plugin-updater = "~2.12"
-tauri-plugin-process = "~2.3"
+# The Tauri crates are pinned to exact versions. Those with an npm counterpart in
+# ui/package.json must share its major.minor: `tauri dev`/`tauri build` compares the two
+# sides and reports "Found version mismatched Tauri packages" otherwise. The crates they
+# pull in (tauri-runtime, wry, tao, muda, ...) are fixed by the committed Cargo.lock; a
+# build that resolves them afresh can pair `tauri` with a runtime crate it does not compile
+# against. Bump the crate, its npm package and Cargo.lock together.
+tauri = { version = "=2.12.0", features = ["tray-icon", "image-png"] }
+tauri-plugin-log = "=2.10.0"
+tauri-plugin-shell = "=2.4.0"
+tauri-plugin-dialog = "=2.8.0"
+tauri-plugin-updater = "=2.13.0"
+tauri-plugin-process = "=2.4.0"
 # `default-features = false` is deliberate: reqwest's defaults include `default-tls`
 # (native-tls -> openssl-sys), which makes the final link require system OpenSSL
 # (`-lssl -lcrypto`, i.e. libssl-dev on Debian/Ubuntu). That package is not in the
@@ -48,8 +49,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "system-proxy",
 ] }
 tokio = { version = "1", features = ["time", "process"] }
-tauri-plugin-decorum = "1.1.1"
-tauri-plugin-os = "~2.3"
+tauri-plugin-decorum = "=1.1.1"
+tauri-plugin-os = "=2.4.0"
 which = "6"
 flate2 = "1"
 tar = "0.4"

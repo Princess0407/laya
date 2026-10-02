@@ -13,7 +13,7 @@ export interface EmbeddingInfo {
 export interface HealthResponse {
 	engine: string;
 	sqlite: string;
-	chromadb?: string;
+	chromadb?: string; // "healthy" | "starting" | "unhealthy"
 	n8n: string;
 	uptime_seconds: number;
 	embeddings?: EmbeddingInfo;

@@ -37,6 +37,7 @@
 	import { triggerSearchFocus } from '$lib/stores/searchFocus';
 	import RunAgentModal from '$lib/components/agent/RunAgentModal.svelte';
 	import UpdateBanner from '$lib/components/UpdateBanner.svelte';
+	import VectorStoreBanner from '$lib/components/VectorStoreBanner.svelte';
 	import Titlebar from '$lib/components/Titlebar.svelte';
 	import { startPeriodicCheck, stopPeriodicCheck } from '$lib/stores/updater';
 	import { onMount } from 'svelte';
@@ -821,6 +822,9 @@
 				<a href="/settings?tab=models&section=agent-usage" class="ml-1 text-xs font-medium text-red-400 underline underline-offset-2 hover:text-red-300">Manage</a>
 			</div>
 		{/if}
+
+		<!-- Vector store setup / unavailable banner -->
+		<VectorStoreBanner />
 
 		<!-- Update available banner -->
 		<UpdateBanner />

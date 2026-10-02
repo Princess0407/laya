@@ -658,3 +658,14 @@ async def test_streaming_applies_max_tokens_clamp(db):
 
     assert captured["stream"] is True
     assert captured["max_tokens"] == 8192  # clamped from DEFAULT_MAX_TOKENS (65536)
+
+
+def test_prompt_caching_not_applied_to_gemini():
+    # Gemini hard-fails (400 "Cached content is too small") on cache_control
+    # blocks under its per-model token minimum; we must never annotate for it.
+    from laya.llm.client import _apply_prompt_caching
+    msgs = [{"role": "system", "content": "short"}, {"role": "user", "content": "hi"}]
+    for model in ("gemini/gemini-2.5-flash", "vertex_ai/gemini-2.5-pro"):
+        assert _apply_prompt_caching(model, msgs) == msgs
+    out = _apply_prompt_caching("anthropic/claude-sonnet-4", msgs)
+    assert out[0]["content"][0]["cache_control"] == {"type": "ephemeral"}

@@ -474,13 +474,20 @@ def _inject_current_datetime(messages: list[dict]) -> list[dict]:
 
 # Providers where caching is opt-in via cache_control annotation.
 # OpenAI caching is automatic; self-hosted engines handle KV cache internally.
-_CACHE_CONTROL_PROVIDERS = frozenset({"anthropic", "gemini", "vertex_ai"})
+# Gemini/Vertex are deliberately NOT here: LiteLLM turns cache_control into an
+# explicit Gemini CachedContent object, and Gemini rejects the whole request
+# with HTTP 400 "Cached content is too small" when the block is under the
+# model's minimum (1024 tokens on Flash, higher on Pro). Our router/stager
+# prompts for small platforms (e.g. Slack, ~976 tokens) fall under that floor,
+# so every such event failed permanently. Anthropic silently skips undersized
+# blocks; Gemini does not. Gemini 2.5+ caches implicitly without annotation.
+_CACHE_CONTROL_PROVIDERS = frozenset({"anthropic"})
 
 
 def _apply_prompt_caching(model: str, messages: list[dict]) -> list[dict]:
     """Annotate system messages with cache_control for providers that support it.
 
-    For Anthropic and Gemini, converts the system message content from a plain
+    For Anthropic, converts the system message content from a plain
     string to a content-block list with ``cache_control: {type: ephemeral}`` so
     LiteLLM can activate the provider's prompt caching.
 
