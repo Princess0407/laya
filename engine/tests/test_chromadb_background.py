@@ -19,6 +19,7 @@ async def test_wait_for_collection_returns_connected_collection(monkeypatch):
 async def test_background_connect_unblocks_waiters(tmp_path, monkeypatch):
     """Callers waiting during background init get the collection once it connects (#24)."""
     import asyncio
+    import threading
 
     from laya.db import chromadb_store
 
@@ -26,12 +27,26 @@ async def test_background_connect_unblocks_waiters(tmp_path, monkeypatch):
     monkeypatch.setattr(chromadb_store, "_choose_embedding_function", lambda *args, **kwargs: None)
     monkeypatch.setattr(chromadb_store, "_collection", None)
 
+    # The connect runs in a worker thread and is fast with the embedding
+    # function stubbed out, so it can finish before the waiter first runs.
+    # Gating it on an event keeps the connect in flight until the test has
+    # seen the waiter pending, independent of thread scheduling.
+    release = threading.Event()
+    real_connect = chromadb_store.connect_chromadb
+
+    def gated_connect():
+        assert release.wait(timeout=30)
+        return real_connect()
+
+    monkeypatch.setattr(chromadb_store, "connect_chromadb", gated_connect)
+
     connecting = asyncio.create_task(chromadb_store.connect_chromadb_background())
     await asyncio.sleep(0)
     waiter = asyncio.create_task(chromadb_store.wait_for_collection(timeout=30))
     await asyncio.sleep(0)
     assert not waiter.done()
 
+    release.set()
     await connecting
     assert (await waiter).name == chromadb_store.COLLECTION_NAME
     chromadb_store.disconnect_chromadb()
