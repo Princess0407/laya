@@ -61,7 +61,7 @@ from laya.logging_setup import resolve_log_level, setup_logging
 from laya.pipeline.omni import start_omni_processor, stop_omni_processor
 from laya.pipeline.queue import recover_stalled_cards, recover_stalled_events, start_consumer, stop_consumer
 from laya.scheduler import start_scheduler, stop_scheduler
-from laya.security.engine_auth import require_engine_auth, router as auth_router
+from laya.security.engine_auth import require_engine_auth
 from laya.security.keychain import ensure_engine_token, load_all_keys_to_env
 
 log = structlog.get_logger()
@@ -256,7 +256,7 @@ async def lifespan(app: FastAPI):
     # Load API keys from OS keychain into environment
     load_all_keys_to_env()
 
-    # Ensure engine API token exists in OS keychain for REST auth
+    # Resolve the engine API token (launcher-supplied env var, else keychain)
     ensure_engine_token()
 
     # Ensure an MCP bearer token exists when auth_mode=bearer so the SSE
@@ -477,7 +477,6 @@ auth_deps = [Depends(require_engine_auth)]
 
 app.include_router(actions_router, dependencies=auth_deps)
 app.include_router(audit_router, dependencies=auth_deps)
-app.include_router(auth_router, dependencies=auth_deps)
 app.include_router(budget_router, dependencies=auth_deps)
 app.include_router(cards_router, dependencies=auth_deps)
 app.include_router(classification_router, dependencies=auth_deps)

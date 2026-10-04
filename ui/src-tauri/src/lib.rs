@@ -450,19 +450,7 @@ fn setup_environment(app: tauri::AppHandle) {
                     std::time::Duration::from_secs(60),
                     engine_state.as_ref().map(|s| &s.0),
                 );
-                let status = if matches!(outcome, sidecar::EngineWait::Ready) {
-                    if let Ok(tok) = sidecar::ensure_engine_token() {
-                        set_cached_engine_token(tok.clone());
-                        if let Some(win) = app.get_webview_window("main") {
-                            let token_json = serde_json::to_string(&tok).unwrap_or_else(|_| format!("{:?}", tok));
-                            let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
-                            let _ = win.eval(&js);
-                        }
-                    }
-                    "done"
-                } else {
-                    "error"
-                };
+                let status = if matches!(outcome, sidecar::EngineWait::Ready) { "done" } else { "error" };
                 emit("engine", status, &outcome.describe());
             }
             Err(e) => {
@@ -475,7 +463,7 @@ fn setup_environment(app: tauri::AppHandle) {
 // ── Main app ────────────────────────────────────────────────────────────
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{
     menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu},
@@ -485,28 +473,97 @@ use tauri::{
 
 struct EngineProcess(Mutex<Option<std::process::Child>>);
 
-static ENGINE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+/// Environment variable that carries the engine API token to the engine
+/// process (read by `laya.security.keychain.ensure_engine_token`).
+pub(crate) const ENGINE_TOKEN_ENV: &str = "LAYA_ENGINE_TOKEN";
 
-fn set_cached_engine_token(tok: String) {
-    if let Ok(mut g) = ENGINE_TOKEN.lock() {
-        *g = Some(tok);
+static ENGINE_TOKEN: OnceLock<String> = OnceLock::new();
+
+/// Bearer token for the engine REST API, fixed for the lifetime of this
+/// process. The shell is its only source: it hands the token to the engine
+/// (via `ENGINE_TOKEN_ENV` at spawn), to the webview (init script) and to its
+/// own engine requests (tray polling), so all three always agree.
+///
+/// A dev build honors a token already present in the shell's environment so
+/// a developer can share one value with a browser tab on the Vite dev server.
+pub(crate) fn engine_token() -> &'static str {
+    ENGINE_TOKEN.get_or_init(|| {
+        if cfg!(dev) {
+            if let Ok(preset) = std::env::var(ENGINE_TOKEN_ENV) {
+                let preset = preset.trim();
+                if !preset.is_empty() {
+                    return preset.to_string();
+                }
+            }
+        }
+        generate_engine_token()
+    })
+}
+
+/// 32 bytes from the OS random source, hex-encoded.
+fn generate_engine_token() -> String {
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes)
+        .expect("OS random source unavailable; cannot create the engine API token");
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// JavaScript that exposes the engine token to the app's own pages as
+/// `window.__LAYA_ENGINE_TOKEN__`.
+///
+/// Tauri runs init scripts on every top-level navigation, and the main window
+/// also displays external sites, so the assignment is guarded by origin: only
+/// the bundled frontend (and, when `include_dev_origins`, the Vite dev server)
+/// receives the token.
+fn engine_token_init_script(token: &str, include_dev_origins: bool) -> String {
+    let token_json = serde_json::to_string(token).expect("a string always serializes to JSON");
+    let dev_origins = if include_dev_origins {
+        r#"||o==="http://localhost:5173"||o==="http://127.0.0.1:5173""#
+    } else {
+        ""
+    };
+    format!(
+        r#"(function(){{var l=window.location,o=l.origin;if((l.protocol==="tauri:"&&l.hostname==="localhost")||o==="http://tauri.localhost"||o==="https://tauri.localhost"{dev_origins}){{window.__LAYA_ENGINE_TOKEN__={token_json};}}}})();"#
+    )
+}
+
+#[cfg(test)]
+mod engine_token_tests {
+    use super::{engine_token_init_script, generate_engine_token};
+
+    #[test]
+    fn generated_token_is_64_hex_chars_and_unique() {
+        let a = generate_engine_token();
+        let b = generate_engine_token();
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn init_script_guards_by_origin_and_embeds_json_token() {
+        let js = engine_token_init_script("abc\"def", false);
+        assert!(js.contains(r#"l.protocol==="tauri:"&&l.hostname==="localhost""#));
+        assert!(js.contains(r#"o==="http://tauri.localhost""#));
+        assert!(js.contains(r#"window.__LAYA_ENGINE_TOKEN__="abc\"def";"#));
+        // The assignment sits inside the origin check, not before it.
+        assert!(js.find("if(").unwrap() < js.find("__LAYA_ENGINE_TOKEN__").unwrap());
+    }
+
+    #[test]
+    fn init_script_trusts_dev_server_only_when_asked() {
+        assert!(!engine_token_init_script("t", false).contains("5173"));
+        let dev = engine_token_init_script("t", true);
+        assert!(dev.contains(r#"o==="http://localhost:5173""#));
+        assert!(dev.contains(r#"o==="http://127.0.0.1:5173""#));
     }
 }
 
-fn get_cached_engine_token() -> Option<String> {
-    ENGINE_TOKEN.lock().ok().and_then(|g| g.clone())
-}
-
+/// Lets the frontend fetch the engine token over IPC when the init-script
+/// global is absent.
 #[tauri::command]
-fn get_engine_token() -> Option<String> {
-    if let Some(tok) = get_cached_engine_token() {
-        return Some(tok);
-    }
-    if let Ok(tok) = sidecar::ensure_engine_token() {
-        set_cached_engine_token(tok.clone());
-        return Some(tok);
-    }
-    None
+fn get_engine_token() -> String {
+    engine_token().to_string()
 }
 
 /// Set to `true` when the app is shutting down.  Background threads
@@ -533,13 +590,25 @@ fn start_health_polling(tray: TrayIcon) {
                         let engine = body.get("engine").and_then(|v| v.as_str()).unwrap_or("unknown");
                         let n8n = body.get("n8n").and_then(|v| v.as_str()).unwrap_or("unknown");
 
-                        let pending = client
+                        let pending = match client
                             .get(format!("{}/cards?status=pending&limit=1", engine_base))
+                            .bearer_auth(engine_token())
                             .send()
-                            .ok()
-                            .and_then(|r| r.json::<serde_json::Value>().ok())
-                            .and_then(|b| b.get("total").and_then(|v| v.as_u64()))
-                            .unwrap_or(0);
+                        {
+                            Ok(r) if r.status().is_success() => r
+                                .json::<serde_json::Value>()
+                                .ok()
+                                .and_then(|b| b.get("total").and_then(|v| v.as_u64()))
+                                .unwrap_or(0),
+                            Ok(r) => {
+                                log::debug!("Tray pending-count request returned {}", r.status());
+                                0
+                            }
+                            Err(e) => {
+                                log::debug!("Tray pending-count request failed: {e}");
+                                0
+                            }
+                        };
 
                         format!(
                             "Laya - Engine: {} | n8n: {} | {} pending",
@@ -658,23 +727,14 @@ pub(crate) fn kill_process_on_port(port: u16, identity: &str) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let token = sidecar::ensure_engine_token().ok();
-    if let Some(ref tok) = token {
-        set_cached_engine_token(tok.clone());
-    }
-
-    let mut builder = tauri::Builder::default();
-    if let Some(ref tok) = token {
-        let token_json = serde_json::to_string(tok).unwrap_or_else(|_| format!("{:?}", tok));
-        let script = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
-        builder = builder.plugin(
-            tauri::plugin::Builder::new("engine-token")
-                .js_init_script(script)
+    tauri::Builder::default()
+        // Registered as an init script so the token is in place before any
+        // page script runs, on first load and on every reload.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("engine-token")
+                .js_init_script(engine_token_init_script(engine_token(), cfg!(dev)))
                 .build(),
-        );
-    }
-
-    builder
+        )
         .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
@@ -988,16 +1048,7 @@ pub fn run() {
                                 Duration::from_secs(30),
                                 engine_state.as_ref().map(|s| &s.0),
                             );
-                            if matches!(outcome, sidecar::EngineWait::Ready) {
-                                if let Ok(tok) = sidecar::ensure_engine_token() {
-                                    set_cached_engine_token(tok.clone());
-                                    if let Some(win) = handle.get_webview_window("main") {
-                                        let token_json = serde_json::to_string(&tok).unwrap_or_else(|_| format!("{:?}", tok));
-                                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
-                                        let _ = win.eval(&js);
-                                    }
-                                }
-                            } else {
+                            if !matches!(outcome, sidecar::EngineWait::Ready) {
                                 log::error!("Engine startup failed: {}", outcome.describe());
                             }
                         });
@@ -1039,13 +1090,7 @@ pub fn run() {
                     || url.starts_with("https://tauri.localhost/")
                     || url.starts_with("about:");
 
-                if is_internal {
-                    if let Some(token) = get_cached_engine_token() {
-                        let token_json = serde_json::to_string(&token).unwrap_or_else(|_| format!("{:?}", token));
-                        let js = format!("window.__LAYA_ENGINE_TOKEN__ = {token_json};");
-                        let _ = webview.eval(&js);
-                    }
-                } else {
+                if !is_internal {
                     let back_url = if cfg!(debug_assertions) {
                         "http://localhost:5173/feed"
                     } else if cfg!(windows) {

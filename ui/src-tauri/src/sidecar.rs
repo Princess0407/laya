@@ -914,7 +914,8 @@ fn spawn_dev_engine() -> Result<Child, String> {
     cmd.arg("-m")
         .arg("laya.main")
         .current_dir(&engine)
-        .env("LAYA_PARENT_PID", std::process::id().to_string());
+        .env("LAYA_PARENT_PID", std::process::id().to_string())
+        .env(crate::ENGINE_TOKEN_ENV, crate::engine_token());
 
     #[cfg(unix)]
     unsafe {
@@ -936,42 +937,6 @@ fn spawn_dev_engine() -> Result<Child, String> {
 
     cmd.spawn()
         .map_err(|e| format!("Failed to spawn engine: {e}"))
-}
-
-/// Ensure the engine API token exists in the OS keychain and return it.
-pub fn ensure_engine_token() -> Result<String, String> {
-    let python = if cfg!(dev) {
-        let engine = engine_source_dir();
-        engine.join(if cfg!(target_os = "windows") {
-            ".venv/Scripts/python.exe"
-        } else {
-            ".venv/bin/python"
-        })
-    } else {
-        venv_python()
-    };
-
-    if !python.exists() {
-        return Err("Python interpreter not found".to_string());
-    }
-
-    let mut cmd = Command::new(&python);
-    no_window(&mut cmd);
-    cmd.args(["-c", "from laya.security.keychain import ensure_engine_token; print(ensure_engine_token())"])
-        .current_dir(engine_source_dir());
-    sanitize_python_cmd(&mut cmd);
-
-    let output = cmd.output().map_err(|e| format!("Failed to run ensure_engine_token: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("ensure_engine_token failed: {stderr}"));
-    }
-
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if token.is_empty() {
-        return Err("ensure_engine_token returned empty token".to_string());
-    }
-    Ok(token)
 }
 
 fn spawn_prod_engine() -> Result<Child, String> {
@@ -1010,7 +975,9 @@ fn spawn_prod_engine() -> Result<Child, String> {
         // LAYA_PARENT_PID lets the engine's parent-watchdog monitor the actual
         // laya-app process, not the intermediate Python launcher (uvicorn spawns
         // a worker subprocess on Windows, so os.getppid() points at the wrong PID).
-        .env("LAYA_PARENT_PID", std::process::id().to_string());
+        .env("LAYA_PARENT_PID", std::process::id().to_string())
+        // The engine authenticates REST requests against this token.
+        .env(crate::ENGINE_TOKEN_ENV, crate::engine_token());
     // AppImage env vars break even the venv Python (see sanitize_python_cmd).
     sanitize_python_cmd(&mut cmd);
 

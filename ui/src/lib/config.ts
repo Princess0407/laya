@@ -25,27 +25,22 @@ export function getEngineWsUrl(): string {
 
 /**
  * Engine authentication token resolution order:
- * 1. window.__LAYA_ENGINE_TOKEN__ (injected by Tauri shell at runtime)
- * 2. window.__LAYA_CONFIG__?.token (injected config object)
- * 3. import.meta.env.VITE_LAYA_ENGINE_TOKEN (browser-only Vite dev mode)
- *    To use in browser dev mode:
- *    Add VITE_LAYA_ENGINE_TOKEN=<token> to ui/.env.local (gitignored).
- *    Never commit secrets. In production, tokens are injected by Tauri at runtime.
+ * 1. window.__LAYA_ENGINE_TOKEN__ (set by the Tauri shell's init script before
+ *    page scripts run)
+ * 2. import.meta.env.VITE_LAYA_ENGINE_TOKEN (browser-only Vite dev mode, where
+ *    no shell exists). Add VITE_LAYA_ENGINE_TOKEN=<token> to ui/.env.local
+ *    (gitignored) with the same value the engine was started with in
+ *    LAYA_ENGINE_TOKEN. Dev builds only; never bundled into production assets.
+ * 3. a token stored with setEngineToken()
  * 4. else ""
  */
 let _fallbackEngineToken = '';
 
 export function getEngineToken(): string {
 	if (typeof window !== 'undefined') {
-		const win = window as unknown as {
-			__LAYA_ENGINE_TOKEN__?: string;
-			__LAYA_CONFIG__?: { token?: string };
-		};
+		const win = window as unknown as { __LAYA_ENGINE_TOKEN__?: string };
 		if (win.__LAYA_ENGINE_TOKEN__) {
 			return win.__LAYA_ENGINE_TOKEN__;
-		}
-		if (win.__LAYA_CONFIG__?.token) {
-			return win.__LAYA_CONFIG__.token;
 		}
 	}
 	if (import.meta.env?.DEV && import.meta.env.VITE_LAYA_ENGINE_TOKEN) {
@@ -87,8 +82,9 @@ export async function waitForEngineToken(options?: WaitForEngineTokenOptions): P
 				setEngineToken(tauriToken);
 				return tauriToken;
 			}
-		} catch {
-			// Tauri command unavailable or failed, fallback to polling
+		} catch (err) {
+			// Fall through to polling the window global.
+			console.warn('get_engine_token command failed', err);
 		}
 	}
 

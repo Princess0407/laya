@@ -225,6 +225,16 @@ def delete_mcp_token() -> bool:
 
 ENGINE_TOKEN_KEY = "laya_engine_api_token"
 
+# Environment variable through which a launcher supplies the engine API token.
+# The Tauri shell generates a token per launch and sets this on the engine
+# process; a developer can set it by hand to run the engine standalone.
+ENGINE_TOKEN_ENV = "LAYA_ENGINE_TOKEN"
+
+# Token pinned for the lifetime of this process. Set when the token comes from
+# ENGINE_TOKEN_ENV, or when a freshly minted token cannot be written to the
+# keychain. While set, the keychain is not consulted for the engine token.
+_process_engine_token: str | None = None
+
 
 def store_engine_token(token: str) -> bool:
     """Store the engine API bearer token in the OS keychain."""
@@ -241,7 +251,13 @@ def store_engine_token(token: str) -> bool:
 
 
 def get_engine_token() -> str | None:
-    """Retrieve the engine API bearer token from the OS keychain (TTL-cached)."""
+    """Return the engine API bearer token.
+
+    The process-pinned token wins when present; otherwise the token is read
+    from the OS keychain (TTL-cached).
+    """
+    if _process_engine_token:
+        return _process_engine_token
     hit, val = _cache_lookup(ENGINE_TOKEN_KEY)
     if hit:
         return val
@@ -269,21 +285,42 @@ def delete_engine_token() -> bool:
         return False
 
 
-def rotate_engine_token() -> str:
-    """Rotate the engine API bearer token. Invalidates cache immediately."""
-    token = secrets.token_urlsafe(32)
-    _cache_drop(ENGINE_TOKEN_KEY)
-    store_engine_token(token)
-    log.info("engine_token_rotated")
-    return token
-
-
 def ensure_engine_token() -> str:
-    """Ensure an engine API token exists in keychain. Mint if missing."""
-    token = get_engine_token()
-    if not token:
-        token = secrets.token_urlsafe(32)
-        store_engine_token(token)
-        log.info("engine_token_minted")
-    return token
+    """Resolve the engine API token for this process and return it.
 
+    Resolution order:
+    1. ENGINE_TOKEN_ENV, when set. The variable is removed from the
+       environment after it is read so that child processes the engine
+       spawns (CLI agents) do not inherit the secret.
+    2. The token stored in the OS keychain.
+    3. A newly minted token, stored in the keychain. If the keychain write
+       fails (no usable backend), the token is pinned in memory so the engine
+       still authenticates consistently for this run.
+    """
+    global _process_engine_token
+
+    env_token = os.environ.pop(ENGINE_TOKEN_ENV, "").strip()
+    if env_token:
+        _process_engine_token = env_token
+        log.info("engine_token_ready", source="env")
+        return env_token
+
+    if _process_engine_token:
+        return _process_engine_token
+
+    token = get_engine_token()
+    if token:
+        log.info("engine_token_ready", source="keychain")
+        return token
+
+    token = secrets.token_urlsafe(32)
+    if store_engine_token(token):
+        log.info("engine_token_ready", source="keychain", minted=True)
+    else:
+        _process_engine_token = token
+        log.warning(
+            "engine_token_not_persisted",
+            source="memory",
+            hint=f"No usable keychain; set {ENGINE_TOKEN_ENV} to supply a known token.",
+        )
+    return token

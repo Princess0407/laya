@@ -80,10 +80,7 @@ import type {
 	ThroughputResponse
 } from './types';
 
-import { getEngineToken, setEngineToken, getEngineUrl } from '$lib/config';
-import { ensureEngineReady } from '$lib/stores/health';
-
-export { ensureEngineReady };
+import { getEngineToken, getEngineUrl } from '$lib/config';
 
 const ENGINE_URL = getEngineUrl();
 
@@ -246,15 +243,6 @@ export const engineApi = {
 		request<{ status: string; provider: string }>(`/settings/api-key/${provider}`, {
 			method: 'DELETE'
 		}),
-
-	// Engine auth token rotation
-	rotateEngineToken: async () => {
-		const res = await request<{ token: string }>('/auth/rotate', {
-			method: 'POST'
-		});
-		setEngineToken(res.token);
-		return res;
-	},
 
 	// Available models (dynamic, grouped by provider)
 	getAvailableModels: (refresh?: boolean) =>

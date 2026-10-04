@@ -56,6 +56,9 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+# OS random source for the per-launch engine API token. Already in the dependency
+# tree (Cargo.lock) through other crates; listed here to call it directly.
+getrandom = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

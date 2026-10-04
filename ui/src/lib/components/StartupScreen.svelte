@@ -1,7 +1,7 @@
 <!-- Copyright 2026 Aayush Chawla -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script lang="ts">
-	import { health, healthError } from '$lib/stores/health';
+	import { health, healthError, engineAuthError } from '$lib/stores/health';
 	import { wsStatus } from '$lib/stores/websocket';
 	import {
 		needsSetup,
@@ -27,6 +27,7 @@
 
 		const engineState: ComponentStatus['state'] = !h
 			? (err ? 'loading' : 'waiting')
+			: $engineAuthError ? 'error'
 			: h.engine === 'healthy' ? 'ready' : 'error';
 
 		const sqliteState: ComponentStatus['state'] = !h
@@ -175,6 +176,9 @@
 			alt="Laya"
 			class="w-56 h-56 object-contain {allReady ? '' : 'animate-pulse'}"
 		/>
+		{#if $engineAuthError}
+			<p class="mt-4 max-w-sm text-center text-xs text-red-400 break-words">{$engineAuthError}</p>
+		{/if}
 
 	{/if}
 </div>
