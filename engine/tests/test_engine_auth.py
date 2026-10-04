@@ -1,13 +1,16 @@
 # Copyright 2026 Aayush Chawla
 # SPDX-License-Identifier: Apache-2.0
 
-"""Tests for engine REST API authentication and rotation."""
+"""Tests for engine REST API authentication."""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from laya.main import app
+from laya.security import keychain
 from laya.security.keychain import (
+    ENGINE_TOKEN_ENV,
+    delete_engine_token,
     ensure_engine_token,
     get_engine_token,
     store_engine_token,
@@ -16,8 +19,10 @@ from laya.security.keychain import (
 
 
 @pytest.fixture(autouse=True)
-def setup_engine_token():
-    """Ensure a clean, known engine token for each test."""
+def setup_engine_token(monkeypatch):
+    """Ensure a clean, known keychain engine token and no pinned token for each test."""
+    monkeypatch.setattr(keychain, "_process_engine_token", None)
+    monkeypatch.delenv(ENGINE_TOKEN_ENV, raising=False)
     test_token = "lyae_test_token_1234567890abcdef"
     store_engine_token(test_token)
     yield test_token
@@ -132,18 +137,27 @@ async def test_repos_get_exempt_and_put_requires_auth():
 
 
 @pytest.mark.asyncio
-async def test_metadata_exemptions_and_restrictions(db):
-    """GET /metadata, GET/PUT /metadata/{key} are exempt for n8n; DELETE requires auth."""
+async def test_metadata_exemptions_and_restrictions(db, setup_engine_token):
+    """Only GET /metadata/{key} is exempt for n8n; list, PUT and DELETE require auth."""
+    auth = {"Authorization": f"Bearer {setup_engine_token}"}
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # GET /metadata list without token
+        # Listing all metadata without a token -> 401
         resp = await client.get("/metadata")
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
-        # PUT /metadata/{key} without token (n8n state storage)
+        # Writing a key without a token -> 401
+        anon_put = await client.put(
+            "/metadata/slack-channels:wf_123",
+            json={"value": {"channels": ["general"]}},
+        )
+        assert anon_put.status_code == 401
+
+        # Writing with the app token succeeds
         put_resp = await client.put(
             "/metadata/slack-channels:wf_123",
             json={"value": {"channels": ["general"]}},
+            headers=auth,
         )
         assert put_resp.status_code == 200
 
@@ -213,56 +227,58 @@ async def test_mcp_reveal_requires_engine_auth(setup_engine_token):
 
 
 @pytest.mark.asyncio
-async def test_force_rotate_invalidates_old_token(setup_engine_token):
-    """POST /auth/rotate replaces token; old token immediately returns 401, new token works."""
-    old_token = setup_engine_token
+async def test_non_ascii_bearer_returns_401():
+    """A bearer with bytes >= 0x80 is rejected with 401, not a 500 from the comparison."""
     transport = ASGITransport(app=app)
-
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Unauthenticated rotate -> 401
-        anon_rotate = await client.post("/auth/rotate")
-        assert anon_rotate.status_code == 401
-
-        # Authenticated rotate -> 200 + new token
-        rotate_resp = await client.post(
-            "/auth/rotate",
-            headers={"Authorization": f"Bearer {old_token}"},
-        )
-        assert rotate_resp.status_code == 200
-        new_token = rotate_resp.json()["token"]
-        assert new_token != old_token
-        assert get_engine_token() == new_token
-
-        # Old token immediately fails on subsequent requests
-        old_resp = await client.get(
+        resp = await client.get(
             "/settings",
-            headers={"Authorization": f"Bearer {old_token}"},
+            headers={"Authorization": "Bearer caf\xe9".encode("latin-1")},
         )
-        assert old_resp.status_code == 401
-
-        # New token succeeds
-        new_resp = await client.get(
-            "/settings",
-            headers={"Authorization": f"Bearer {new_token}"},
-        )
-        assert new_resp.status_code == 200
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "Unauthorized"}
 
 
 @pytest.mark.asyncio
-async def test_in_process_cache_invalidated_on_rotate():
-    """In-process cache is dropped and updated immediately on rotation."""
-    t1 = ensure_engine_token()
-    assert get_engine_token() == t1
+async def test_env_token_wins_and_is_removed_from_environment(monkeypatch, setup_engine_token):
+    """A launcher-supplied token replaces the keychain token and is not left in os.environ."""
+    import os
+
+    monkeypatch.setenv(ENGINE_TOKEN_ENV, "env_supplied_token")
+    assert ensure_engine_token() == "env_supplied_token"
+    assert ENGINE_TOKEN_ENV not in os.environ
+    assert get_engine_token() == "env_supplied_token"
+    # Resolving again keeps the pinned token even though the variable is gone.
+    assert ensure_engine_token() == "env_supplied_token"
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/auth/rotate",
-            headers={"Authorization": f"Bearer {t1}"},
+        keychain_resp = await client.get(
+            "/settings", headers={"Authorization": f"Bearer {setup_engine_token}"}
         )
-        assert resp.status_code == 200
-        t2 = resp.json()["token"]
-        assert t2 != t1
+        env_resp = await client.get(
+            "/settings", headers={"Authorization": "Bearer env_supplied_token"}
+        )
+    assert keychain_resp.status_code == 401
+    assert env_resp.status_code == 200
 
-        # Direct in-process retrieval returns new token, not cached t1
-        assert get_engine_token() == t2
+
+def test_ensure_returns_existing_keychain_token(setup_engine_token):
+    """Without the env var, the stored keychain token is used as is."""
+    assert ensure_engine_token() == setup_engine_token
+
+
+@pytest.mark.asyncio
+async def test_minted_token_is_pinned_when_keychain_write_fails(monkeypatch):
+    """With no usable keychain the minted token still authenticates for this process."""
+    delete_engine_token()
+    monkeypatch.setattr(keychain, "store_engine_token", lambda token: False)
+
+    token = ensure_engine_token()
+    assert token
+    assert get_engine_token() == token
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/settings", headers={"Authorization": f"Bearer {token}"})
+    assert resp.status_code == 200

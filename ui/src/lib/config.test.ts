@@ -36,7 +36,6 @@ describe('engine auth token helpers', () => {
 		setEngineToken(null);
 		const win = ((globalThis as any).window ??= {});
 		delete win.__LAYA_ENGINE_TOKEN__;
-		delete win.__LAYA_CONFIG__;
 		expect(getEngineToken()).toBe('');
 	});
 
@@ -46,24 +45,12 @@ describe('engine auth token helpers', () => {
 		setEngineToken(null);
 	});
 
-	it('reads from window.__LAYA_CONFIG__', () => {
+	it('reads the token the shell injects as window.__LAYA_ENGINE_TOKEN__', () => {
 		setEngineToken(null);
 		const win = ((globalThis as any).window ??= {});
-		delete win.__LAYA_ENGINE_TOKEN__;
-		win.__LAYA_CONFIG__ = { token: 'injected_from_config' };
-		expect(getEngineToken()).toBe('injected_from_config');
-		delete win.__LAYA_CONFIG__;
-		setEngineToken(null);
-	});
-
-	it('prioritizes window.__LAYA_ENGINE_TOKEN__ over window.__LAYA_CONFIG__', () => {
-		setEngineToken(null);
-		const win = ((globalThis as any).window ??= {});
-		win.__LAYA_CONFIG__ = { token: 'config_token' };
 		win.__LAYA_ENGINE_TOKEN__ = 'window_token';
 		expect(getEngineToken()).toBe('window_token');
 		delete win.__LAYA_ENGINE_TOKEN__;
-		delete win.__LAYA_CONFIG__;
 		setEngineToken(null);
 	});
 
