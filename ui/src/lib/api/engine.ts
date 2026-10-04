@@ -226,6 +226,14 @@ export const engineApi = {
 		return resp.blob();
 	},
 
+	// Prompt overrides loaded from ~/.laya/prompts/
+	getPrompts: () =>
+		request<{ prompts: { key: string; file: string; overridden: boolean }[] }>('/prompts'),
+	reloadPrompts: () =>
+		request<{ status: string; overridden_keys: string[] }>('/prompts/reload', {
+			method: 'POST'
+		}),
+
 	detectAgentPaths: () =>
 		request<{ agent_paths: Record<string, string> }>('/settings/detect-agents'),
 

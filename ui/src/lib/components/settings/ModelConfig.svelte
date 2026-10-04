@@ -5,6 +5,7 @@
 	import { slide } from 'svelte/transition';
 	import { engineApi } from '$lib/api/engine';
 	import { glassTheme } from '$lib/stores/glassTheme';
+	import PromptOverridesCard from './PromptOverridesCard.svelte';
 	import { reducedMotion } from '$lib/stores/reducedMotion';
 	import type { ProviderModels, CustomProvider, CustomProviderTestResult, DiscoveredModel, PipelineSettings, BudgetConfig, MonthlyCostEntry, AgentBackend, AgentBudgetStatus } from '$lib/api/types';
 	import { parseBackendDate } from '$lib/utils/datetime';
@@ -1246,6 +1247,8 @@
 				</div>
 			</div>
 		</div>
+
+		<PromptOverridesCard />
 
 		<!-- Advanced Pipeline Settings -->
 		<div class="{$glassTheme ? 'glass-section' : 'rounded-lg border border-surface-700 bg-surface-800'}">
