@@ -346,6 +346,36 @@ n8n is managed automatically by the Tauri app -- it starts on launch (port 45678
 
 > **Note:** If the engine fails with "Address already in use", a stale engine process may be holding port 8420. The engine will attempt to kill it automatically on startup.
 
+### Engine API authentication
+
+The engine's REST API requires an `Authorization: Bearer <token>` header on every route except `GET /health`. The Laya app handles this by itself: on each launch it generates a new token, shares it with the engine, and uses it for all of its own requests. There is nothing to configure for normal use, and the token is kept in memory only.
+
+**Running the UI in a plain browser.** When you open `http://localhost:5173` in a browser there is no Tauri window to supply the token, so give the engine and the UI the same value yourself:
+
+```bash
+# ui/.env.local (gitignored)
+VITE_LAYA_ENGINE_TOKEN=<token>
+
+# Standalone engine + Vite dev server
+cd engine && source .venv/bin/activate && LAYA_ENGINE_TOKEN=<token> python -m laya.main
+cd ui && npm run dev
+
+# Or: the Tauri window and a browser tab side by side (dev builds only)
+LAYA_ENGINE_TOKEN=<token> scripts/dev.sh
+```
+
+Vite reads `.env.local` when it starts, so restart `npm run dev` after changing the token. Release builds ignore a preset `LAYA_ENGINE_TOKEN` and always generate their own. If the UI cannot find a token, the startup screen says so.
+
+**Calling the API by hand.** Start the engine with a known `LAYA_ENGINE_TOKEN` as above and send it as a bearer header:
+
+```bash
+curl -H "Authorization: Bearer $LAYA_ENGINE_TOKEN" http://127.0.0.1:8420/settings
+```
+
+A standalone engine started without `LAYA_ENGINE_TOKEN` creates a token and stores it in the OS keychain (service `laya-engine`, account `laya_engine_api_token`).
+
+The routes the bundled n8n workflows call (`POST /events`, `GET /repos`, `GET /metadata/{key}`, `POST /ingestion-errors`) and the OAuth redirect callback accept requests without a token. The WebSocket at `/ws` is not authenticated yet.
+
 ### Configuration
 
 On first launch, the engine creates config files in `~/.laya/`:
@@ -373,14 +403,17 @@ vim ~/.laya/prompts/router.md
 
 # Override a worker persona
 vim ~/.laya/prompts/engineer.md
+```
 
-# Reload without restarting
-curl -X POST http://127.0.0.1:8420/prompts/reload
+Apply changes without restarting from **Settings → Models → Custom Prompts → Reload prompts**, which also lists the prompt files currently in use. From a terminal, the same reload needs the engine token (see "Engine API authentication"):
+
+```bash
+curl -X POST -H "Authorization: Bearer $LAYA_ENGINE_TOKEN" http://127.0.0.1:8420/prompts/reload
 ```
 
 Available prompt files: `router.md`, `stager.md`, `omni.md`, `group_summary_initial.md`, `group_summary_rolling.md`, `briefing.md`, `summarizer.md`, `summarizer_status_change.md`, `engineer.md`, `comms.md`, `sales.md`, `hr.md`, `ops.md`, `finance.md`, `chat.md`, `chat_title.md`, `chat_polish.md`, `learner.md`, `context_learner.md`, `trace_narrative.md`, `trace_summary.md`, `trace_filter.md`.
 
-Custom prompts fully replace the built-in default for that stage. If a file is deleted, the hardcoded default is used automatically. The engine never creates or modifies files in this directory. Use `GET /prompts` to check which prompts are currently overridden.
+Custom prompts fully replace the built-in default for that stage. If a file is deleted, the hardcoded default is used automatically. The engine never creates or modifies files in this directory. Use `GET /prompts` (with the same bearer header) to check which prompts are currently overridden.
 
 ### Data Storage
 

@@ -10,6 +10,18 @@ Laya has three communication boundaries:
 
 This document specifies the first two. The coding agent interface is defined in the codebase as the `CodingAgent` protocol.
 
+### Authentication
+
+REST requests to the engine carry `Authorization: Bearer <token>`. The Tauri shell generates the token on each launch and passes it to both the engine and the UI; see "Engine API authentication" in the [README](../README.md) for supplying one manually. Requests without a valid token get `401 {"detail": "Unauthorized"}`.
+
+These routes accept requests without a token:
+
+- `GET /health`
+- The routes n8n calls: `POST /events`, `GET /repos`, `GET /metadata/{key}`, `POST /ingestion-errors`
+- `GET /egress/connections/oauth/callback` (vendor OAuth redirect)
+
+The WebSocket (`/ws`) is not authenticated.
+
 ## 1. n8n -> Laya Engine (Inbound Events)
 
 ### `POST /events`

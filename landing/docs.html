@@ -107,6 +107,7 @@
         <div class="sidebar-title">Privacy &amp; Security</div>
         <a href="#doc-privacy-tiers">Privacy Tiers</a>
         <a href="#doc-privacy-keys">API Key Storage</a>
+        <a href="#doc-privacy-engine-auth">Engine API Access</a>
         <a href="#doc-privacy-local">Local-Only Mode</a>
       </div>
       <div class="sidebar-section">
@@ -169,16 +170,18 @@ cd laya
 mkdir -p ~/.laya/n8n_module ~/.laya/n8n
 npm install --prefix ~/.laya/n8n_module n8n
 
-# Start the Engine
+# Start the Engine with an API token of your choice
 cd engine
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python -m laya.main
+LAYA_ENGINE_TOKEN=&lt;token&gt; python -m laya.main
 
-# Start the UI (in a separate terminal)
+# Start the UI (in a separate terminal) with the same token
 cd ui
 npm install
+echo "VITE_LAYA_ENGINE_TOKEN=&lt;token&gt;" &gt; .env.local
 npm run dev</code></pre>
+      <p>The manual path runs the UI in a browser, without the Laya window that normally supplies the engine's API token, so the engine and the UI must be given the same token. See <a href="#doc-privacy-engine-auth">Engine API Access</a>.</p>
 
       <h2 id="doc-first-run">First Run</h2>
       <p>When Laya starts for the first time, it automatically:</p>
@@ -454,7 +457,7 @@ npm install --prefix ~/.laya/n8n_module n8n</code></pre>
       </table>
 
       <h3>Testing Your Workflow</h3>
-      <p>You can test the event format directly from your terminal before wiring up the full workflow:</p>
+      <p>You can test the event format directly from your terminal before wiring up the full workflow. This endpoint does not require the engine API token:</p>
 <pre><code>curl -X POST http://localhost:8420/events \
   -H "Content-Type: application/json" \
   -d '{
@@ -983,6 +986,33 @@ content.body         content.metadata.*</code></pre>
       </ul>
       <p>On engine startup, keys are loaded from the keychain into memory. They never touch disk in plaintext.</p>
 
+      <h2 id="doc-privacy-engine-auth">Engine API Access</h2>
+      <p>The Laya Engine's local REST API (<code>http://127.0.0.1:8420</code>) requires an <code>Authorization: Bearer &lt;token&gt;</code> header, so other programs on your machine cannot read your cards or settings through it. The Laya app handles this by itself: on every launch it generates a new token, shares it with the engine, and uses it for its own requests. The token is kept in memory only &mdash; there is nothing to configure.</p>
+      <p>A few endpoints accept requests without a token:</p>
+      <ul>
+        <li><code>GET /health</code> &mdash; status checks</li>
+        <li><code>POST /events</code>, <code>GET /repos</code>, <code>GET /metadata/{key}</code>, <code>POST /ingestion-errors</code> &mdash; called by the n8n workflows</li>
+        <li>The OAuth redirect callback used when connecting a platform</li>
+      </ul>
+
+      <h3>Running the UI in a Browser</h3>
+      <p>If you build from source and open the UI at <code>http://localhost:5173</code> in a browser, there is no Laya window to supply the token. Give the engine and the UI the same value:</p>
+<pre><code># ui/.env.local
+VITE_LAYA_ENGINE_TOKEN=&lt;token&gt;
+
+# Standalone engine + UI dev server
+cd engine &amp;&amp; source .venv/bin/activate &amp;&amp; LAYA_ENGINE_TOKEN=&lt;token&gt; python -m laya.main
+cd ui &amp;&amp; npm run dev
+
+# Or: the Laya window and a browser tab side by side (development builds only)
+LAYA_ENGINE_TOKEN=&lt;token&gt; ./scripts/dev.sh</code></pre>
+      <p>Restart <code>npm run dev</code> after changing the token. Release builds ignore a preset <code>LAYA_ENGINE_TOKEN</code> and always generate their own. If the UI cannot find a token, the startup screen says so.</p>
+
+      <h3>Calling the API Yourself</h3>
+      <p>Start the engine with a known <code>LAYA_ENGINE_TOKEN</code> as shown above and send it as a bearer header:</p>
+<pre><code>curl -H "Authorization: Bearer $LAYA_ENGINE_TOKEN" http://127.0.0.1:8420/settings</code></pre>
+      <p>An engine started on its own without <code>LAYA_ENGINE_TOKEN</code> creates a token and stores it in your OS keychain (service <code>laya-engine</code>, account <code>laya_engine_api_token</code>).</p>
+
       <h2 id="doc-privacy-local">Local-Only Mode</h2>
       <p>For maximum privacy, you can run Laya entirely without cloud models:</p>
       <ol>
@@ -1077,9 +1107,10 @@ You are the Router for Laya. Classify incoming events with these priorities:
 - LOW: everything else
 ...
 EOF
-
-# Reload without restarting the engine
-curl -X POST http://127.0.0.1:8420/prompts/reload</code></pre>
+</code></pre>
+      <p>To apply changes without restarting, open <strong>Settings &rarr; Models &rarr; Custom Prompts</strong> and click <strong>Reload prompts</strong>. The same card lists the prompt files currently in use.</p>
+      <p>From a terminal, the reload call needs the engine's API token; see <a href="#doc-privacy-engine-auth">Engine API Access</a>:</p>
+<pre><code>curl -X POST -H "Authorization: Bearer $LAYA_ENGINE_TOKEN" http://127.0.0.1:8420/prompts/reload</code></pre>
 
       <h3>Available Prompt Files</h3>
       <table>
@@ -1122,6 +1153,7 @@ curl -X POST http://127.0.0.1:8420/prompts/reload</code></pre>
         <tr><td><code>GET /prompts</code></td><td>Returns all 22 prompt keys with their override status</td></tr>
         <tr><td><code>POST /prompts/reload</code></td><td>Re-scans <code>~/.laya/prompts/</code> and hot-swaps overrides without restarting</td></tr>
       </table>
+      <p>Both endpoints require the engine API token as a bearer header.</p>
 
       <h2 id="doc-mcp">MCP Server</h2>
       <p>Laya exposes its toolset over the <strong>Model Context Protocol</strong>. Any MCP-compatible client &mdash; Claude Desktop, Cursor, VS Code, Zed, custom agents &mdash; can call into Laya to search your cards, fetch events, trace entities, run semantic search, and trigger outbound actions across all 9 connected platforms.</p>
